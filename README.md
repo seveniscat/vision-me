@@ -84,11 +84,18 @@ npm run detect /path/to/image.jpg
 ### 3. 启动 Web 服务 + 前端（可视化验证）
 
 ```bash
-# 后端
-cd backend && npm run dev
+# 首次运行先安装前后端依赖
+make install
 
-# 前端（新开终端）
-cd frontend && npm run dev
+# 一键启动后端 + 前端
+make dev
+```
+
+也可以按需单独启动：
+
+```bash
+make backend
+make frontend
 ```
 
 前端已适配新流程，返回的是 **Stage2 精炼后的文字**。
