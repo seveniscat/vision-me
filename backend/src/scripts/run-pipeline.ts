@@ -35,6 +35,7 @@ function parseArgs() {
     concurrency: undefined,
     saveArtifacts: true,
     outputDir: './output',
+    debug: false,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -49,6 +50,7 @@ function parseArgs() {
     else if (a === '--concurrency' || a === '-c') result.concurrency = Number(args[++i]);
     else if (a === '--outputDir') result.outputDir = args[++i];
     else if (a === '--no-save') result.saveArtifacts = false;
+    else if (a === '--debug') result.debug = true;
   }
 
   return result;
@@ -71,6 +73,7 @@ async function main() {
   --concurrency 2           最大并发（默认 2）
   --outputDir ./output      产物输出目录
   --no-save                 不保存 annotated.jpg 和 json
+  --debug                   抓取中间产物（瓦片/crop/manifest）到 output/debug/<runId>/
 
 示例:
   tsx src/scripts/run-pipeline.ts ./samples/box-9000.jpg --overlapRatio 0.5 --padding 60
@@ -102,6 +105,7 @@ async function main() {
       saveArtifacts: cfg.saveArtifacts,
       outputDir: cfg.outputDir,
       originalFileName: fileName,
+      debug: cfg.debug,
     });
 
     console.log('[CLI] 流程完成！');

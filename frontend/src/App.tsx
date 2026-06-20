@@ -4,6 +4,7 @@ import {
   Button,
   Upload,
   Card,
+  Checkbox,
   Progress,
   Typography,
   Space,
@@ -23,8 +24,9 @@ import {
 import type { UploadProps } from 'antd';
 import ImageViewer from './components/ImageViewer';
 import ResultsTable from './components/ResultsTable';
-import { detectImage } from './api';
-import type { Detection, DetectProgress, DetectResult } from './types';
+import DebugViewer from './components/DebugViewer';
+import { detectImage, fetchDebugManifest } from './api';
+import type { Detection, DetectProgress, DetectResult, DebugManifest } from './types';
 
 const { Header, Content } = Layout;
 const { Text } = Typography;
@@ -41,6 +43,9 @@ export default function App() {
   const [progress, setProgress] = useState<DetectProgress | null>(null);
   const [stats, setStats] = useState<DetectResult['stats'] | null>(null);
 
+  const [debugMode, setDebugMode] = useState(false);
+  const [debugBundle, setDebugBundle] = useState<{ runId: string; manifest: DebugManifest } | null>(null);
+
   const resetAll = () => {
     if (imageUrl) URL.revokeObjectURL(imageUrl);
     setImageUrl('');
@@ -50,6 +55,7 @@ export default function App() {
     setSelectedId(undefined);
     setProgress(null);
     setStats(null);
+    setDebugBundle(null);
     setIsDetecting(false);
   };
 
@@ -103,11 +109,23 @@ export default function App() {
     await detectImage(
       imageFile,
       (p) => setProgress(p),
-      (result) => {
+      async (result) => {
         setDetections(result.detections);
         setStats(result.stats);
         setProgress(null);
         setIsDetecting(false);
+
+        // 调试模式：拉取中间产物 manifest，进入调试检视器
+        if (debugMode && result.debugBundleId) {
+          try {
+            const manifest = await fetchDebugManifest(result.debugBundleId);
+            setDebugBundle({ runId: result.debugBundleId, manifest });
+          } catch {
+            message.error('加载调试包失败，请检查后端');
+          }
+          return;
+        }
+
         message.success(`检测完成！共识别 ${result.detections.length} 处文字`);
         // 自动选中第一条
         if (result.detections.length > 0) {
@@ -118,7 +136,8 @@ export default function App() {
         setIsDetecting(false);
         setProgress(null);
         message.error('检测失败: ' + err);
-      }
+      },
+      debugMode
     );
   };
 
@@ -178,8 +197,16 @@ export default function App() {
       </Header>
 
       <Content className="main-content">
-        {/* 左侧图片查看器 */}
-        <div className="viewer-panel">
+        {debugBundle ? (
+          <DebugViewer
+            runId={debugBundle.runId}
+            manifest={debugBundle.manifest}
+            onExit={() => setDebugBundle(null)}
+          />
+        ) : (
+          <>
+            {/* 左侧图片查看器 */}
+            <div className="viewer-panel">
           <div className="controls">
             <Upload {...uploadProps}>
               <Button icon={<UploadOutlined />} disabled={isDetecting}>
@@ -200,6 +227,10 @@ export default function App() {
             <Button icon={<ClearOutlined />} onClick={resetAll} disabled={isDetecting && !imageFile}>
               清空
             </Button>
+
+            <Checkbox checked={debugMode} onChange={(e) => setDebugMode(e.target.checked)} disabled={isDetecting}>
+              调试模式
+            </Checkbox>
 
             <Divider type="vertical" />
 
@@ -338,6 +369,8 @@ export default function App() {
             </div>
           )}
         </div>
+        </>
+      )}
       </Content>
     </Layout>
   );
