@@ -26,7 +26,7 @@ import type { UploadProps } from 'antd';
 import ImageViewer from './components/ImageViewer';
 import ResultsTable from './components/ResultsTable';
 import DebugViewer from './components/DebugViewer';
-import OssUpload from './components/OssUpload';
+import UploadButton from './components/UploadButton';
 import { detectImage, fetchDebugManifest, getInfo, type UploadResult } from './api';
 import type { Detection, DetectProgress, DetectResult, DebugManifest } from './types';
 
@@ -48,13 +48,13 @@ export default function App() {
   const [debugMode, setDebugMode] = useState(false);
   const [debugBundle, setDebugBundle] = useState<{ runId: string; manifest: DebugManifest } | null>(null);
 
-  const [ossEnabled, setOssEnabled] = useState(false);
+  const [uploadEnabled, setUploadEnabled] = useState(false);
   const [ossUrl, setOssUrl] = useState<string | null>(null);
 
-  // 启动时拉取后端信息（含 OSS 是否已配置），用于显示上传入口状态
+  // 启动时拉取后端信息（含上传服务是否已配置），用于显示上传入口状态
   useEffect(() => {
     getInfo()
-      .then((info) => setOssEnabled(!!info.ossEnabled))
+      .then((info) => setUploadEnabled(!!info.uploadEnabled))
       .catch(() => {});
   }, []);
 
@@ -313,13 +313,13 @@ export default function App() {
             size="small"
             title={
               <>
-                <CloudUploadOutlined /> 图片上传 (OSS)
+                <CloudUploadOutlined /> 图片上传
               </>
             }
-            extra={ossEnabled ? <Tag color="green">已启用</Tag> : <Tag>未配置</Tag>}
+            extra={uploadEnabled ? <Tag color="green">已启用</Tag> : <Tag>未配置</Tag>}
             style={{ margin: 12, flexShrink: 0 }}
           >
-            <OssUpload
+            <UploadButton
               maxSize={200}
               onUploaded={(info: UploadResult) => {
                 setOssUrl(info.url);

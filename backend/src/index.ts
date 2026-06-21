@@ -5,7 +5,7 @@ import multer from 'multer';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { detectTextOnLargeImage } from './services/detector.js';
-import { uploadToOss, isOssConfigured } from './services/ossClient.js';
+import { uploadImage, isUploadConfigured } from './services/uploadClient.js';
 import { initSSE, sendError } from './utils/sse.js';
 
 // 调试包根目录（流水线落盘的 output/debug）
@@ -89,7 +89,7 @@ app.get('/api/info', (_req, res) => {
     overlapRatio: 0.45,
     contextPadding: 50,
     maxConcurrency: process.env.MAX_CONCURRENCY || 2,
-    ossEnabled: isOssConfigured(),
+    uploadEnabled: isUploadConfigured(),
     note: '严格按照「阶段一瓦片检测 → NMS合并 → 阶段二高清识别」两阶段流程实现',
   });
 });
@@ -141,7 +141,7 @@ app.get('/api/debug/:runId/file/*', (req, res) => {
   });
 });
 
-// 图片上传到 OSS（独立能力）：返回可访问 URL 与对象 key
+// 图片上传（公司签名上传服务）：两步签名上传，返回可访问 URL 与文件名 key
 app.post('/api/upload', upload.single('image'), async (req, res) => {
   if (!req.file) {
     res.status(400).json({ error: '请上传图片文件（字段名为 image）' });
@@ -161,10 +161,10 @@ app.post('/api/upload', upload.single('image'), async (req, res) => {
   );
 
   try {
-    const { url, key } = await uploadToOss(req.file.buffer, contentType, req.file.originalname);
+    const { url, key } = await uploadImage(req.file.buffer, contentType, req.file.originalname);
     res.json({ url, key, name: req.file.originalname, size: req.file.size });
   } catch (err: any) {
-    console.error('[Upload] 上传 OSS 失败:', err?.message || err);
+    console.error('[Upload] 上传失败:', err?.message || err);
     res.status(500).json({ error: err?.message || '上传失败' });
   }
 });

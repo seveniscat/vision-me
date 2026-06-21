@@ -4,7 +4,7 @@ import { CloudUploadOutlined } from '@ant-design/icons';
 import type { UploadProps } from 'antd';
 import { uploadImage, type UploadResult } from '../api';
 
-export interface OssUploadProps {
+export interface UploadButtonProps {
   accept?: string;
   maxSize?: number; // MB
   onUploaded?: (info: UploadResult) => void;
@@ -12,11 +12,11 @@ export interface OssUploadProps {
 }
 
 /**
- * 可复用的 OSS 上传组件：选择图片 → 上传到 OSS → 通过 onUploaded 回调返回 URL 等信息。
+ * 可复用的上传组件：选择图片 → 经后端 /api/upload 传到签名上传服务 → 通过 onUploaded 回调返回 URL 等信息。
  * 镜像 vision-me 既有约定（axios 实例 + antd），未引入新依赖。
  */
-export default function OssUpload(props: OssUploadProps) {
-  const { accept = 'image/*', maxSize = 200, onUploaded, text = '上传图片到 OSS' } = props;
+export default function UploadButton(props: UploadButtonProps) {
+  const { accept = 'image/*', maxSize = 200, onUploaded, text = '上传图片' } = props;
   const [progress, setProgress] = useState(0);
 
   const handleUpload: UploadProps['customRequest'] = async (options) => {

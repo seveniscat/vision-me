@@ -12,8 +12,6 @@
     "detect:help": "tsx src/scripts/run-pipeline.ts --help"
   },
   "dependencies": {
-    "@types/ali-oss": "^6.23.3",
-    "ali-oss": "^6.23.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",

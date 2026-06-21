@@ -91,7 +91,7 @@ export interface AppInfo {
   overlapRatio: number;
   contextPadding: number;
   maxConcurrency: number;
-  ossEnabled: boolean;
+  uploadEnabled: boolean;
   note?: string;
 }
 
@@ -107,7 +107,7 @@ export interface UploadResult {
   size?: number;
 }
 
-/** 上传图片到 OSS（后端 POST /api/upload），返回可访问 URL */
+/** 上传图片到签名上传服务（后端 POST /api/upload），返回可访问 URL */
 export async function uploadImage(file: File): Promise<UploadResult> {
   const form = new FormData();
   form.append('image', file);
