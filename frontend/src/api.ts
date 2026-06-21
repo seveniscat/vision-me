@@ -85,8 +85,35 @@ export async function detectImage(
   }
 }
 
-export async function getInfo() {
-  const { data } = await api.get('/info');
+export interface AppInfo {
+  model: string;
+  tileSize: number;
+  overlapRatio: number;
+  contextPadding: number;
+  maxConcurrency: number;
+  ossEnabled: boolean;
+  note?: string;
+}
+
+export async function getInfo(): Promise<AppInfo> {
+  const { data } = await api.get<AppInfo>('/info');
+  return data;
+}
+
+export interface UploadResult {
+  url: string;
+  key: string;
+  name?: string;
+  size?: number;
+}
+
+/** 上传图片到 OSS（后端 POST /api/upload），返回可访问 URL */
+export async function uploadImage(file: File): Promise<UploadResult> {
+  const form = new FormData();
+  form.append('image', file);
+  const { data } = await api.post<UploadResult>('/upload', form, {
+    timeout: 1000 * 60 * 5, // 大图最多 5 分钟
+  });
   return data;
 }
 
