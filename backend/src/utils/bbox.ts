@@ -13,6 +13,9 @@ export interface Detection {
   refinedText?: string;
   refinedConfidence?: number;
   refinedStyle?: string;
+
+  // 调试模式：该框对应的 Stage2 crop 文件（相对 debug 目录的路径）
+  cropFile?: string;
 }
 
 /** 计算两个 bbox 的 IoU (Intersection over Union) */
@@ -47,7 +50,7 @@ export function bboxArea(b: BBox): number {
 export function normalizeText(s: string): string {
   return s
     .toLowerCase()
-    .replace(/[\s\u3000\u00A0]+/g, '')
+    .replace(/[\s　 ]+/g, '')
     .replace(/[·•・—–―]+/g, '')
     .trim();
 }
@@ -86,22 +89,45 @@ function levenshtein(a: string, b: string): number {
   return dp[m][n];
 }
 
+/* ============================================================
+ * 调试溯源：记录被 NMS 抑制的框、被相邻合并的来源
+ * ============================================================ */
+
+export interface SuppressedRecord {
+  id: string;
+  bbox: BBox;
+  text: string;
+  suppressedBy: string; // 抑制它的保留框 id
+  iou: number;
+  phase: 'nms1' | 'nms2';
+}
+
+export interface MergedGroup {
+  intoId: string; // 合并结果框 id
+  fromIds: string[]; // 被合并进来的框 id
+}
+
+export interface MergeProvenance {
+  result: Detection[];
+  suppressed: SuppressedRecord[]; // 两轮 NMS 被抑制的框
+  mergedGroups: MergedGroup[]; // 相邻合并的来源
+}
+
 /**
- * 标准 NMS（Non-Maximum Suppression）
- * 按置信度（或面积）从高到低排序，抑制高 IoU 的重复框
+ * NMS（带抑制记录版）：行为与 nms() 完全一致，额外把被抑制的框写入 outSuppressed。
  */
-export function nms(
+function nmsWithSuppression(
   detections: Detection[],
-  iouThreshold = 0.45,
-  preferConfidence = true
+  iouThreshold: number,
+  phase: 'nms1' | 'nms2',
+  outSuppressed: SuppressedRecord[]
 ): Detection[] {
   if (detections.length === 0) return [];
 
-  // 排序：优先用 confidence，其次用面积
   const sorted = [...detections].sort((a, b) => {
     const ca = a.confidence ?? 0;
     const cb = b.confidence ?? 0;
-    if (preferConfidence && Math.abs(ca - cb) > 0.05) {
+    if (Math.abs(ca - cb) > 0.05) {
       return cb - ca;
     }
     return bboxArea(b.bbox) - bboxArea(a.bbox);
@@ -110,14 +136,24 @@ export function nms(
   const kept: Detection[] = [];
 
   for (const det of sorted) {
-    let suppressed = false;
+    let suppressor: { id: string; iou: number } | null = null;
     for (const exist of kept) {
-      if (iou(det.bbox, exist.bbox) >= iouThreshold) {
-        suppressed = true;
+      const v = iou(det.bbox, exist.bbox);
+      if (v >= iouThreshold) {
+        suppressor = { id: exist.id, iou: v };
         break;
       }
     }
-    if (!suppressed) {
+    if (suppressor) {
+      outSuppressed.push({
+        id: det.id,
+        bbox: det.bbox,
+        text: det.refinedText || det.text || '',
+        suppressedBy: suppressor.id,
+        iou: suppressor.iou,
+        phase,
+      });
+    } else {
       kept.push(det);
     }
   }
@@ -126,15 +162,19 @@ export function nms(
 }
 
 /**
- * 相邻框合并（针对被切断的同一行/同一艺术字）
- * 如果两个框在空间上很接近（小间隙 + 大部分垂直/水平对齐），且文本语义可能连续，则合并。
+ * 相邻框合并（带合并来源记录版）：行为与 mergeAdjacentBoxes() 一致，
+ * 额外把每次合并的来源（fromIds → intoId）记录到 mergedGroups。
  */
-export function mergeAdjacentBoxes(
+function mergeAdjacentInternal(
   detections: Detection[],
-  maxGap = 28,           // 允许的最大像素间隙
-  minOverlapRatio = 0.55 // 垂直或水平方向的最小重叠比例
-): Detection[] {
-  if (detections.length <= 1) return detections;
+  maxGap = 28,
+  minOverlapRatio = 0.55
+): { result: Detection[]; mergedGroups: MergedGroup[] } {
+  const mergedGroupsMap = new Map<string, string[]>();
+
+  if (detections.length <= 1) {
+    return { result: detections, mergedGroups: [] };
+  }
 
   const result: Detection[] = [];
   const used = new Set<number>();
@@ -161,7 +201,6 @@ export function mergeAdjacentBoxes(
         const a = current.bbox;
         const b = sorted[j].d.bbox;
 
-        // 计算中心和间隙
         const aRight = a[2], aLeft = a[0], aTop = a[1], aBot = a[3];
         const bRight = b[2], bLeft = b[0], bTop = b[1], bBot = b[3];
 
@@ -174,7 +213,6 @@ export function mergeAdjacentBoxes(
         const yOverlapRatio = yMinH > 0 ? yOverlap / yMinH : 0;
 
         if (hGap <= maxGap && hGap >= 0 && yOverlapRatio >= minOverlapRatio) {
-          // 合并
           const mergedBbox: BBox = [
             Math.min(aLeft, bLeft),
             Math.min(aTop, bTop),
@@ -190,6 +228,9 @@ export function mergeAdjacentBoxes(
             confidence: Math.max(current.confidence ?? 0, sorted[j].d.confidence ?? 0),
             refinedConfidence: Math.max(current.refinedConfidence ?? 0, sorted[j].d.refinedConfidence ?? 0),
           };
+          const arr = mergedGroupsMap.get(current.id) || [];
+          arr.push(sorted[j].d.id);
+          mergedGroupsMap.set(current.id, arr);
           used.add(sorted[j].idx);
           merged = true;
           break;
@@ -212,6 +253,9 @@ export function mergeAdjacentBoxes(
             bbox: mergedBbox,
             text: (current.text + ' ' + sorted[j].d.text).trim(),
           };
+          const arr = mergedGroupsMap.get(current.id) || [];
+          arr.push(sorted[j].d.id);
+          mergedGroupsMap.set(current.id, arr);
           used.add(sorted[j].idx);
           merged = true;
           break;
@@ -221,18 +265,72 @@ export function mergeAdjacentBoxes(
     result.push(current);
   }
 
-  // 排序输出
-  return result.sort((a, b) => {
-    const [ax1, ay1] = a.bbox;
-    const [bx1, by1] = b.bbox;
-    if (Math.abs(ay1 - by1) > 24) return ay1 - by1;
-    return ax1 - bx1;
-  });
+  const mergedGroups: MergedGroup[] = Array.from(mergedGroupsMap.entries()).map(([intoId, fromIds]) => ({
+    intoId,
+    fromIds,
+  }));
+
+  return {
+    result: result.sort((a, b) => {
+      const [ax1, ay1] = a.bbox;
+      const [bx1, by1] = b.bbox;
+      if (Math.abs(ay1 - by1) > 24) return ay1 - by1;
+      return ax1 - bx1;
+    }),
+    mergedGroups,
+  };
 }
 
 /**
- * 综合去重合并：先 NMS，再相邻框合并
- * 这是推荐给 Stage1 后的合并策略
+ * 标准 NMS（Non-Maximum Suppression）
+ * 按置信度（或面积）从高到低排序，抑制高 IoU 的重复框
+ */
+export function nms(
+  detections: Detection[],
+  iouThreshold = 0.45,
+  preferConfidence = true
+): Detection[] {
+  return nmsWithSuppression(detections, iouThreshold, 'nms1', []);
+}
+
+/**
+ * 相邻框合并（对外保留的无溯源版本）
+ */
+export function mergeAdjacentBoxes(
+  detections: Detection[],
+  maxGap = 28,
+  minOverlapRatio = 0.55
+): Detection[] {
+  return mergeAdjacentInternal(detections, maxGap, minOverlapRatio).result;
+}
+
+/**
+ * 综合去重合并（带溯源）：先 NMS，再相邻框合并，最后轻量二次 NMS。
+ * 同时记录被抑制/被合并的来源，供调试模式可视化。
+ */
+export function mergeDetectionsWithProvenance(
+  detections: Detection[],
+  options: {
+    nmsIou?: number;
+    adjacentMaxGap?: number;
+    adjacentOverlap?: number;
+  } = {}
+): MergeProvenance {
+  const { nmsIou = 0.45, adjacentMaxGap = 28, adjacentOverlap = 0.55 } = options;
+
+  const suppressed: SuppressedRecord[] = [];
+
+  let result = nmsWithSuppression(detections, nmsIou, 'nms1', suppressed);
+  const adj = mergeAdjacentInternal(result, adjacentMaxGap, adjacentOverlap);
+  result = adj.result;
+  result = nmsWithSuppression(result, 0.55, 'nms2', suppressed);
+
+  return { result, suppressed, mergedGroups: adj.mergedGroups };
+}
+
+/**
+ * 综合去重合并（无溯源版本，向后兼容）。
+ * 与 mergeDetectionsWithProvenance 走同一条实现，只是丢弃溯源信息。
  */
 export function mergeDetectionsNMS(
   detections: Detection[],
@@ -242,15 +340,7 @@ export function mergeDetectionsNMS(
     adjacentOverlap?: number;
   } = {}
 ): Detection[] {
-  const { nmsIou = 0.45, adjacentMaxGap = 28, adjacentOverlap = 0.55 } = options;
-
-  let result = nms(detections, nmsIou);
-  result = mergeAdjacentBoxes(result, adjacentMaxGap, adjacentOverlap);
-
-  // 再次轻量 NMS（防止合并后仍残留小重叠）
-  result = nms(result, 0.55);
-
-  return result;
+  return mergeDetectionsWithProvenance(detections, options).result;
 }
 
 /** 旧版兼容（保留） */

@@ -15,12 +15,13 @@ import {
 } from './qwenClient.js';
 import {
   Detection,
-  mergeDetectionsNMS,
+  mergeDetectionsWithProvenance,
   BBox,
 } from '../utils/bbox.js';
 import { Response } from 'express';
 import { sendProgress, sendComplete, sendError } from '../utils/sse.js';
 import pLimit from 'p-limit';
+import { DebugWriter, makeRunId } from './debugCapture.js';
 
 /* ============================================================
  * 配置接口（严格遵循用户技术方案）
@@ -44,6 +45,10 @@ export interface PipelineOptions {
   saveArtifacts?: boolean;     // 是否生成 annotated.jpg 和 detections.json
   outputDir?: string;          // 保存目录，默认 ./output
   originalFileName?: string;   // 用于命名输出文件
+
+  // === 调试模式 ===
+  debug?: boolean;             // 是否抓取中间产物（瓦片/crop/manifest）
+  debugDir?: string;           // debug 包根目录，默认 ./output/debug
 }
 
 export interface PipelineResult {
@@ -60,6 +65,7 @@ export interface PipelineResult {
   };
   annotatedImageBuffer?: Buffer; // 如果 saveArtifacts 则生成
   jsonResult?: object;
+  debugBundleId?: string;        // 调试模式产物目录名（用于前端拉取 manifest）
 }
 
 /* ============================================================
@@ -85,9 +91,30 @@ export async function runTwoStagePipeline(
   const saveArtifacts = options.saveArtifacts ?? false;
   const outputDir = options.outputDir || './output';
 
+  // ---------- 调试模式初始化 ----------
+  const debug = options.debug ?? false;
+  const debugDir = options.debugDir || './output/debug';
+  const debugWriter: DebugWriter | null = debug ? new DebugWriter(makeRunId(), debugDir) : null;
+  if (debugWriter) {
+    await debugWriter.init();
+    await debugWriter.writeOriginal(imageBuffer);
+  }
+
   // ---------- 元数据 ----------
   const meta = await getImageMeta(imageBuffer);
   const { width: W, height: H } = meta;
+
+  if (debugWriter) {
+    debugWriter.setMeta(W, H, {
+      tileSize,
+      overlapRatio,
+      overlapPx: absoluteOverlap,
+      contextPadding: padding,
+      maxConcurrency,
+      stage1Model,
+      stage2Model,
+    });
+  }
 
   const totalTiles = await countTiles(imageBuffer, tileSize, absoluteOverlap);
 
@@ -110,6 +137,11 @@ export async function runTwoStagePipeline(
 
   for await (const tile of generateTiles(imageBuffer, tileSize, absoluteOverlap)) {
     const job = limit(async () => {
+      // 调试模式：落盘瓦片
+      if (debugWriter) {
+        await debugWriter.writeTile(tile.index, tile.x, tile.y, tile.width, tile.height, tile.buffer);
+      }
+
       // 调用 Stage1 专用检测函数（高召回 Prompt）
       const localDets = await detectRegionsInTile(tile.buffer, stage1Model);
 
@@ -154,12 +186,22 @@ export async function runTwoStagePipeline(
     message: `【NMS+合并】Stage1 原始检出 ${stage1Detections.length}，正在执行 NMS + 相邻框合并...`,
   });
 
-  // NMS + 相邻框合并（严格按照技术方案要求）
-  const afterNMS = mergeDetectionsNMS(stage1Detections, {
+  // 调试模式：记录 Stage1 原始检出（合并前）
+  if (debugWriter) {
+    debugWriter.setStage1Raw(stage1Detections);
+  }
+
+  // NMS + 相邻框合并（严格按照技术方案要求），带溯源
+  const mergeProv = mergeDetectionsWithProvenance(stage1Detections, {
     nmsIou: 0.45,
     adjacentMaxGap: 32,
     adjacentOverlap: 0.55,
   });
+  const afterNMS = mergeProv.result;
+
+  if (debugWriter) {
+    debugWriter.setMerge(mergeProv);
+  }
 
   sendProgressSafe(res, {
     stage: 'stage2_start',
@@ -186,6 +228,9 @@ export async function runTwoStagePipeline(
           'jpeg'
         );
 
+        // 调试模式：落盘 crop 小图
+        const cropFile = debugWriter ? await debugWriter.writeCrop(det.id, cropBuffer) : undefined;
+
         // 送 Stage2 专用识别 Prompt
         const recog = await recognizeTextInCrop(cropBuffer, stage2Model);
 
@@ -199,6 +244,7 @@ export async function runTwoStagePipeline(
           refinedStyle: recog.style,
           confidence: recog.confidence ?? det.confidence,
           style: det.style || recog.style,
+          cropFile,
         };
 
         finalDetections.push(refined);
@@ -275,6 +321,13 @@ export async function runTwoStagePipeline(
     await saveArtifactsToDisk(annotatedImageBuffer, jsonResult, outputDir, options.originalFileName);
   }
 
+  // 调试模式：写入 manifest.json
+  let debugBundleId: string | undefined;
+  if (debugWriter) {
+    await debugWriter.flush(finalDetections);
+    debugBundleId = debugWriter.runId;
+  }
+
   const result: PipelineResult = {
     imageWidth: W,
     imageHeight: H,
@@ -289,6 +342,7 @@ export async function runTwoStagePipeline(
     },
     annotatedImageBuffer,
     jsonResult,
+    debugBundleId,
   };
 
   // 打印文字列表（供知识库比对）
@@ -301,7 +355,20 @@ export async function runTwoStagePipeline(
   });
 
   if (res) {
-    sendComplete(res, result);
+    // Web 场景：发送适配后的 DetectResult 结构（字段名与前端对齐），
+    // CLI 场景仍返回完整的 PipelineResult（stats 字段名更细）。
+    sendComplete(res, {
+      imageWidth: result.imageWidth,
+      imageHeight: result.imageHeight,
+      detections: result.detections,
+      debugBundleId: result.debugBundleId,
+      stats: {
+        tilesProcessed: result.stats.stage1Tiles,
+        rawDetections: result.stats.stage1Raw,
+        afterDedup: result.stats.finalCount,
+        durationMs: result.stats.durationMs,
+      },
+    });
   }
 
   return result;
@@ -443,12 +510,15 @@ export interface DetectOptions {
   maxConcurrency?: number;
   model?: string;
   contextPadding?: number;
+  debug?: boolean;
+  debugDir?: string;
 }
 
 export interface DetectResult {
   imageWidth: number;
   imageHeight: number;
   detections: Detection[];
+  debugBundleId?: string;
   stats: {
     tilesProcessed: number;
     rawDetections: number;
@@ -472,6 +542,8 @@ export async function detectTextOnLargeImage(
     contextPadding: options.contextPadding,
     // Web 场景默认不落盘，由前端负责可视化
     saveArtifacts: false,
+    debug: options.debug,
+    debugDir: options.debugDir,
   });
 
   // 适配旧的 DetectResult 结构
@@ -479,6 +551,7 @@ export async function detectTextOnLargeImage(
     imageWidth: pipelineResult.imageWidth,
     imageHeight: pipelineResult.imageHeight,
     detections: pipelineResult.detections,
+    debugBundleId: pipelineResult.debugBundleId,
     stats: {
       tilesProcessed: pipelineResult.stats.stage1Tiles,
       rawDetections: pipelineResult.stats.stage1Raw,

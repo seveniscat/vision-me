@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { DetectResult, DetectProgress } from './types';
+import type { DetectResult, DetectProgress, DebugManifest } from './types';
 
 const api = axios.create({
   baseURL: '/api',
@@ -10,13 +10,15 @@ export async function detectImage(
   file: File,
   onProgress: (p: DetectProgress) => void,
   onComplete: (result: DetectResult) => void,
-  onError: (err: string) => void
+  onError: (err: string) => void,
+  debug = false
 ) {
   const formData = new FormData();
   formData.append('image', file);
 
   try {
-    const response = await fetch('/api/detect', {
+    const url = debug ? '/api/detect?debug=true' : '/api/detect';
+    const response = await fetch(url, {
       method: 'POST',
       body: formData,
     });
@@ -86,4 +88,15 @@ export async function detectImage(
 export async function getInfo() {
   const { data } = await api.get('/info');
   return data;
+}
+
+/** 拉取某次运行的调试 manifest */
+export async function fetchDebugManifest(runId: string): Promise<DebugManifest> {
+  const { data } = await api.get(`/debug/${runId}`);
+  return data;
+}
+
+/** 调试包内静态文件的访问 URL（原图/瓦片/crop） */
+export function debugFileUrl(runId: string, rel: string): string {
+  return `/api/debug/${runId}/file/${rel}`;
 }

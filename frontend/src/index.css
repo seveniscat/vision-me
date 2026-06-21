@@ -147,3 +147,171 @@ html, body, #root {
   display: flex;
   gap: 16px;
 }
+
+/* ==================== 调试检视器 ==================== */
+
+.debug-viewer {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #fff;
+}
+
+.dbg-toolbar {
+  padding: 8px 12px;
+  background: #fafafa;
+  border-bottom: 1px solid #e8e8e8;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dbg-body {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.dbg-canvas {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  background: #1f1f1f;
+  cursor: grab;
+  user-select: none;
+}
+
+.dbg-canvas:active {
+  cursor: grabbing;
+}
+
+.dbg-stage {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.dbg-overlay {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+}
+
+.dbg-box {
+  position: absolute;
+  pointer-events: all;
+}
+
+.dbg-tile {
+  position: absolute;
+  border: 1px dashed rgba(22, 119, 255, 0.5);
+  background: rgba(22, 119, 255, 0.04);
+  pointer-events: none;
+}
+
+.dbg-s1 {
+  border: 2px solid rgba(22, 119, 255, 0.7);
+  background: rgba(22, 119, 255, 0.08);
+}
+
+.dbg-sup {
+  border: 2px dashed #8c8c8c;
+  background: rgba(140, 140, 140, 0.08);
+}
+
+.dbg-fin {
+  border: 2px solid #ff4d4f;
+  background: rgba(255, 77, 79, 0.08);
+  cursor: pointer;
+}
+
+.dbg-fin:hover {
+  border-color: #ff7875;
+  background: rgba(255, 77, 79, 0.18);
+}
+
+.dbg-fin.selected {
+  border-color: #52c41a;
+  background: rgba(82, 196, 26, 0.15);
+  box-shadow: 0 0 0 2px rgba(82, 196, 26, 0.3);
+}
+
+.dbg-label {
+  position: absolute;
+  top: -18px;
+  left: 0;
+  background: #ff4d4f;
+  color: #fff;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 2px;
+  white-space: nowrap;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dbg-fin.selected .dbg-label {
+  background: #52c41a;
+}
+
+.dbg-hud {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  padding: 2px 8px;
+  font-size: 11px;
+  border-radius: 3px;
+  pointer-events: none;
+}
+
+.dbg-loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #bbb;
+  font-size: 13px;
+}
+
+.dbg-side {
+  width: 360px;
+  padding: 12px;
+  overflow: auto;
+  background: #fff;
+  border-left: 1px solid #e8e8e8;
+  flex-shrink: 0;
+}
+
+.legend {
+  display: inline-block;
+  width: 14px;
+  height: 8px;
+  border-radius: 2px;
+  vertical-align: middle;
+}
+
+.legend.sw-tile {
+  border: 1px dashed rgba(22, 119, 255, 0.7);
+}
+
+.legend.sw-s1 {
+  background: rgba(22, 119, 255, 0.5);
+}
+
+.legend.sw-sup {
+  background: #8c8c8c;
+}
+
+.legend.sw-fin {
+  background: #ff4d4f;
+}
+

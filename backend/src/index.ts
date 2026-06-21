@@ -2,8 +2,18 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
+import path from 'node:path';
+import fs from 'node:fs/promises';
 import { detectTextOnLargeImage } from './services/detector.js';
 import { initSSE, sendError } from './utils/sse.js';
+
+// 调试包根目录（流水线落盘的 output/debug）
+const DEBUG_DIR = path.resolve(process.env.DEBUG_DIR || './output/debug');
+
+// runId 只允许字母/数字/下划线/短横，防止路径穿越
+function isSafeRunId(id: string): boolean {
+  return /^[A-Za-z0-9_-]+$/.test(id);
+}
 
 const app = express();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3001;
@@ -58,6 +68,7 @@ app.post('/api/detect', upload.single('image'), async (req, res) => {
       contextPadding: req.query.padding ? Number(req.query.padding) : undefined,
       maxConcurrency: req.query.concurrency ? Number(req.query.concurrency) : undefined,
       model: (req.query.model as string) || undefined,
+      debug: req.query.debug === 'true',
     });
   } catch (err: any) {
     console.error('[Detect] 处理失败:', err);
@@ -78,6 +89,53 @@ app.get('/api/info', (_req, res) => {
     contextPadding: 50,
     maxConcurrency: process.env.MAX_CONCURRENCY || 2,
     note: '严格按照「阶段一瓦片检测 → NMS合并 → 阶段二高清识别」两阶段流程实现',
+  });
+});
+
+// ==================== 调试模式接口 ====================
+
+// 获取某个运行包的 manifest（瓦片网格 / Stage1 原始框 / 合并溯源 / Stage2 crop 清单）
+app.get('/api/debug/:runId', async (req, res) => {
+  const runId = req.params.runId;
+  if (!isSafeRunId(runId)) {
+    res.status(400).json({ error: '非法 runId' });
+    return;
+  }
+  const manifestPath = path.join(DEBUG_DIR, runId, 'manifest.json');
+  try {
+    const data = await fs.readFile(manifestPath, 'utf-8');
+    res.type('application/json').send(data);
+  } catch {
+    res.status(404).json({ error: '调试包不存在' });
+  }
+});
+
+// 提供调试包内的静态文件（原图 / 瓦片 / crop），带路径穿越防护
+app.get('/api/debug/:runId/file/*', (req, res) => {
+  const runId = req.params.runId;
+  if (!isSafeRunId(runId)) {
+    res.status(400).json({ error: '非法 runId' });
+    return;
+  }
+
+  const rel = decodeURIComponent((req.params as Record<string, string>)['0'] || '');
+  const parts = rel.split('/').filter(Boolean);
+  if (parts.length === 0 || parts.some((p) => p === '..' || p.includes('\\'))) {
+    res.status(400).json({ error: '非法路径' });
+    return;
+  }
+
+  const runDir = path.resolve(DEBUG_DIR, runId);
+  const filePath = path.resolve(runDir, ...parts);
+  if (!filePath.startsWith(runDir + path.sep)) {
+    res.status(400).json({ error: '非法路径' });
+    return;
+  }
+
+  res.sendFile(filePath, (err) => {
+    if (err) {
+      res.status(404).json({ error: '文件不存在' });
+    }
   });
 });
 
