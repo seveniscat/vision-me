@@ -232,7 +232,7 @@ export default function App() {
           </div>
 
           <ImageViewer
-            imageUrl={imageUrl || ''}
+            imageUrl={imageUrl}
             imageWidth={imageMeta?.width || 0}
             imageHeight={imageMeta?.height || 0}
             detections={detections}
