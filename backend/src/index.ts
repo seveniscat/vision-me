@@ -208,6 +208,6 @@ app.listen(PORT, () => {
   console.log(`\n🚀 Vision-Me Backend 已启动`);
   console.log(`   端口: ${PORT}`);
   console.log(`   健康检查: http://localhost:${PORT}/health`);
-  console.log(`   检测接口: POST http://localhost:${PORT}/api/detect (multipart, field=image)`);
+  console.log(`   检测接口: POST http://localhost:${PORT}/api/detect (JSON body: { url })`);
   console.log(`   模型: ${process.env.QWEN_VL_MODEL || 'qwen-vl-max-latest (默认)'}\n`);
 });
