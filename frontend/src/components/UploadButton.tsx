@@ -9,6 +9,7 @@ export interface UploadButtonProps {
   maxSize?: number; // MB
   onUploaded?: (info: UploadResult) => void;
   text?: string;
+  disabled?: boolean;
 }
 
 /**
@@ -16,7 +17,7 @@ export interface UploadButtonProps {
  * 镜像 vision-me 既有约定（axios 实例 + antd），未引入新依赖。
  */
 export default function UploadButton(props: UploadButtonProps) {
-  const { accept = 'image/*', maxSize = 200, onUploaded, text = '上传图片' } = props;
+  const { accept = 'image/*', maxSize = 200, onUploaded, text = '上传图片', disabled = false } = props;
   const [progress, setProgress] = useState(0);
 
   const handleUpload: UploadProps['customRequest'] = async (options) => {
@@ -47,8 +48,8 @@ export default function UploadButton(props: UploadButtonProps) {
 
   return (
     <>
-      <Upload accept={accept} showUploadList={false} customRequest={handleUpload}>
-        <Button icon={<CloudUploadOutlined />} block>
+      <Upload accept={accept} showUploadList={false} customRequest={handleUpload} disabled={disabled}>
+        <Button icon={<CloudUploadOutlined />} block disabled={disabled}>
           {text}
         </Button>
       </Upload>

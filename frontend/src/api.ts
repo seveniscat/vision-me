@@ -7,20 +7,18 @@ const api = axios.create({
 });
 
 export async function detectImage(
-  file: File,
+  url: string,
   onProgress: (p: DetectProgress) => void,
   onComplete: (result: DetectResult) => void,
   onError: (err: string) => void,
   debug = false
 ) {
-  const formData = new FormData();
-  formData.append('image', file);
-
   try {
-    const url = debug ? '/api/detect?debug=true' : '/api/detect';
-    const response = await fetch(url, {
+    const endpoint = debug ? '/api/detect?debug=true' : '/api/detect';
+    const response = await fetch(endpoint, {
       method: 'POST',
-      body: formData,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
     });
 
     if (!response.ok) {
@@ -44,7 +42,6 @@ export async function detectImage(
 
       buffer += decoder.decode(value, { stream: true });
 
-      // 按 SSE 事件切分（data: ...\n\n）
       const parts = buffer.split('\n\n');
       buffer = parts.pop() || '';
 
