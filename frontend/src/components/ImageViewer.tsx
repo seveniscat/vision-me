@@ -2,7 +2,7 @@ import React, { useRef, useState, useCallback, useEffect } from 'react';
 import type { Detection } from '../types';
 
 interface ImageViewerProps {
-  imageUrl: string;
+  imageUrl: string | null;
   imageWidth: number;
   imageHeight: number;
   detections: Detection[];
@@ -207,7 +207,7 @@ export default function ImageViewer({
         >
           <img
             ref={imgRef}
-            src={imageUrl}
+            src={imageUrl ?? undefined}
             alt="待检测图片"
             onLoad={handleImageLoad}
             style={{ display: 'block', maxWidth: 'none' }}

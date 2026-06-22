@@ -35,34 +35,39 @@ app.use(
   })
 );
 
+// JSON body parser（用于 /api/detect 接收 { url }）
+app.use(express.json({ limit: '1mb' }));
+
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
 });
 
-// 核心接口：上传图片并进行全图文字检测（严格两阶段流程 + SSE 进度）
-app.post('/api/detect', upload.single('image'), async (req, res) => {
-  if (!req.file) {
-    res.status(400).json({ error: '请上传图片文件（字段名为 image）' });
+// 核心接口：接收图片 URL，下载后进行全图文字检测（严格两阶段流程 + SSE 进度）
+app.post('/api/detect', async (req, res) => {
+  const url = typeof req.body?.url === 'string' ? req.body.url : '';
+  if (!url) {
+    res.status(400).json({ error: '缺少 url' });
     return;
   }
-
-  const contentType = req.file.mimetype || '';
-  if (!contentType.startsWith('image/')) {
-    res.status(400).json({ error: '只支持图片文件 (jpg/png/webp 等)' });
-    return;
-  }
-
-  console.log(
-    `[Detect] 收到文件: ${req.file.originalname || 'unknown'}, 大小: ${(req.file.size / 1024 / 1024).toFixed(2)}MB`
-  );
 
   // 设置 SSE 响应头
   initSSE(res);
   res.flushHeaders?.();
 
+  let buffer: Buffer;
   try {
-    await detectTextOnLargeImage(req.file.buffer, res, {
-      // 严格技术方案推荐参数 + 可覆盖
+    buffer = await downloadImage(url);
+    console.log(`[Detect] 下载完成: ${url}, ${(buffer.length / 1024 / 1024).toFixed(2)}MB`);
+  } catch (err: any) {
+    try {
+      sendError(res, err?.message || '图片下载失败');
+    } catch {}
+    res.end();
+    return;
+  }
+
+  try {
+    await detectTextOnLargeImage(buffer, res, {
       tileSize: req.query.tileSize ? Number(req.query.tileSize) : undefined,
       overlap: req.query.overlap ? Number(req.query.overlap) : undefined,
       overlapRatio: req.query.overlapRatio ? Number(req.query.overlapRatio) : undefined,
@@ -169,10 +174,40 @@ app.post('/api/upload', upload.single('image'), async (req, res) => {
   }
 });
 
+// 从 URL 下载图片到 Buffer，带超时和体积上限保护
+async function downloadImage(url: string, timeoutMs = 30_000): Promise<Buffer> {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error('非法 url');
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('url 必须是 http/https');
+  }
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(parsed, { signal: ctrl.signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const ab = await res.arrayBuffer();
+    const buf = Buffer.from(ab);
+    if (buf.length > 200 * 1024 * 1024) {
+      throw new Error(`图片过大 (${(buf.length / 1024 / 1024).toFixed(1)}MB > 200MB)`);
+    }
+    return buf;
+  } catch (err: any) {
+    if (err.name === 'AbortError') throw new Error('图片下载超时(30s)');
+    throw new Error(`图片下载失败: ${err.message}`);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 app.listen(PORT, () => {
   console.log(`\n🚀 Vision-Me Backend 已启动`);
   console.log(`   端口: ${PORT}`);
   console.log(`   健康检查: http://localhost:${PORT}/health`);
-  console.log(`   检测接口: POST http://localhost:${PORT}/api/detect (multipart, field=image)`);
+  console.log(`   检测接口: POST http://localhost:${PORT}/api/detect (JSON body: { url })`);
   console.log(`   模型: ${process.env.QWEN_VL_MODEL || 'qwen-vl-max-latest (默认)'}\n`);
 });

@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import {
   Layout,
   Button,
-  Upload,
   Card,
   Checkbox,
   Progress,
@@ -14,15 +13,12 @@ import {
   Alert,
 } from 'antd';
 import {
-  UploadOutlined,
   PlayCircleOutlined,
   ClearOutlined,
   DownloadOutlined,
   ZoomInOutlined,
   CompressOutlined,
-  CloudUploadOutlined,
 } from '@ant-design/icons';
-import type { UploadProps } from 'antd';
 import ImageViewer from './components/ImageViewer';
 import ResultsTable from './components/ResultsTable';
 import DebugViewer from './components/DebugViewer';
@@ -34,8 +30,8 @@ const { Header, Content } = Layout;
 const { Text } = Typography;
 
 export default function App() {
-  const [imageUrl, setImageUrl] = useState<string>('');
-  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [imageSize, setImageSize] = useState<number | null>(null);
   const [imageMeta, setImageMeta] = useState<{ width: number; height: number } | null>(null);
 
   const [detections, setDetections] = useState<Detection[]>([]);
@@ -49,7 +45,6 @@ export default function App() {
   const [debugBundle, setDebugBundle] = useState<{ runId: string; manifest: DebugManifest } | null>(null);
 
   const [uploadEnabled, setUploadEnabled] = useState(false);
-  const [ossUrl, setOssUrl] = useState<string | null>(null);
 
   // 启动时拉取后端信息（含上传服务是否已配置），用于显示上传入口状态
   useEffect(() => {
@@ -59,9 +54,8 @@ export default function App() {
   }, []);
 
   const resetAll = () => {
-    if (imageUrl) URL.revokeObjectURL(imageUrl);
-    setImageUrl('');
-    setImageFile(null);
+    setImageUrl(null);
+    setImageSize(null);
     setImageMeta(null);
     setDetections([]);
     setSelectedId(undefined);
@@ -71,55 +65,20 @@ export default function App() {
     setIsDetecting(false);
   };
 
-  const handleFileSelect = (file: File) => {
-    if (!file.type.startsWith('image/')) {
-      message.error('请选择图片文件');
-      return false;
-    }
-    // 超大图警告
-    if (file.size > 80 * 1024 * 1024) {
-      message.warning('图片体积较大（>80MB），检测时间会较长，请耐心等待');
-    }
-
-    const url = URL.createObjectURL(file);
-
-    // 先用 Image 读取真实尺寸（不依赖 EXIF）
-    const img = new Image();
-    img.onload = () => {
-      setImageMeta({ width: img.width, height: img.height });
-    };
-    img.src = url;
-
-    setImageUrl(url);
-    setImageFile(file);
-    setDetections([]);
-    setSelectedId(undefined);
-    setProgress(null);
-    setStats(null);
-
-    return false; // 阻止 Upload 自动上传
-  };
-
-  const uploadProps: UploadProps = {
-    accept: 'image/*',
-    showUploadList: false,
-    beforeUpload: handleFileSelect,
-  };
-
   const runDetection = async () => {
-    if (!imageFile) {
+    if (!imageUrl) {
       message.error('请先上传图片');
       return;
     }
 
     setIsDetecting(true);
-    setProgress({ stage: 'uploading', message: '正在上传并准备处理...' });
+    setProgress({ stage: 'uploading', message: '正在下载图片并准备处理...' });
     setDetections([]);
     setSelectedId(undefined);
     setStats(null);
 
     await detectImage(
-      imageFile,
+      imageUrl,
       (p) => setProgress(p),
       async (result) => {
         setDetections(result.detections);
@@ -127,7 +86,6 @@ export default function App() {
         setProgress(null);
         setIsDetecting(false);
 
-        // 调试模式：拉取中间产物 manifest，进入调试检视器
         if (debugMode && result.debugBundleId) {
           try {
             const manifest = await fetchDebugManifest(result.debugBundleId);
@@ -139,7 +97,6 @@ export default function App() {
         }
 
         message.success(`检测完成！共识别 ${result.detections.length} 处文字`);
-        // 自动选中第一条
         if (result.detections.length > 0) {
           setSelectedId(result.detections[0].id);
         }
@@ -170,7 +127,7 @@ export default function App() {
     if (!detections.length) return;
 
     const payload = {
-      image: imageFile?.name || 'unknown',
+      image: imageUrl || 'unknown',
       imageSize: imageMeta,
       stats,
       detections: detections.map((d) => ({
@@ -220,23 +177,28 @@ export default function App() {
             {/* 左侧图片查看器 */}
             <div className="viewer-panel">
           <div className="controls">
-            <Upload {...uploadProps}>
-              <Button icon={<UploadOutlined />} disabled={isDetecting}>
-                上传图片
-              </Button>
-            </Upload>
+            <UploadButton
+              disabled={isDetecting || !uploadEnabled}
+              onUploaded={(info: UploadResult) => {
+                setImageUrl(info.url);
+                setImageSize(info.size ?? null);
+                const img = new Image();
+                img.onload = () => setImageMeta({ width: img.width, height: img.height });
+                img.src = info.url;
+              }}
+            />
 
             <Button
               type="primary"
               icon={<PlayCircleOutlined />}
               onClick={runDetection}
-              disabled={!imageFile || isDetecting}
+              disabled={!imageUrl || isDetecting}
               loading={isDetecting}
             >
               开始检测
             </Button>
 
-            <Button icon={<ClearOutlined />} onClick={resetAll} disabled={isDetecting && !imageFile}>
+            <Button icon={<ClearOutlined />} onClick={resetAll} disabled={isDetecting && !imageUrl}>
               清空
             </Button>
 
@@ -264,7 +226,7 @@ export default function App() {
             {imageMeta && (
               <Text type="secondary" style={{ fontSize: 12 }}>
                 {imageMeta.width} × {imageMeta.height} px
-                {imageFile && ` · ${(imageFile.size / 1024 / 1024).toFixed(1)}MB`}
+                {imageSize != null && ` · ${(imageSize / 1024 / 1024).toFixed(1)}MB`}
               </Text>
             )}
           </div>
@@ -309,31 +271,6 @@ export default function App() {
 
         {/* 右侧结果面板 */}
         <div className="sidebar">
-          <Card
-            size="small"
-            title={
-              <>
-                <CloudUploadOutlined /> 图片上传
-              </>
-            }
-            extra={uploadEnabled ? <Tag color="green">已启用</Tag> : <Tag>未配置</Tag>}
-            style={{ margin: 12, flexShrink: 0 }}
-          >
-            <UploadButton
-              maxSize={200}
-              onUploaded={(info: UploadResult) => {
-                setOssUrl(info.url);
-                message.success('上传成功');
-              }}
-            />
-            {ossUrl && (
-              <div style={{ marginTop: 8, fontSize: 12, wordBreak: 'break-all' }}>
-                <Text type="secondary">URL：</Text>
-                <Text copyable>{ossUrl}</Text>
-              </div>
-            )}
-          </Card>
-
           <div className="results-header">
             <span>检测结果 ({detections.length})</span>
             <Space>
